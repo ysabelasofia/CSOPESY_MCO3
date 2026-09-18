@@ -22,6 +22,7 @@ int main() {
             if (command_prompt == "start_marquee" || command_prompt == "stop_marquee" || command_prompt == "set_speed")
             {
                 std::cout << "[feature to be implemented]\n\n";
+                // di ko alam if need pa lagyan yung para sa set_speed na input lolol
             }
             else
             {
