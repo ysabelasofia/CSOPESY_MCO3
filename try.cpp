@@ -2,6 +2,17 @@
 #include <string>
 #include <string_view>
 #include <charconv>
+#include <thread>
+#include <chrono>
+
+void marquee2(std::string& text)
+{
+    if (text.empty()) return;
+
+    char first = text[0]; //gets front charac
+    text.erase(0, 1);
+    text += first; //moves og first charac to the end
+}
 
 int main() {
     std::cout << "Welcome to CSOPESY!\n\n";
@@ -67,8 +78,23 @@ int main() {
         }
 
         else if (cmd == "start_marquee") {
-            std::cout << "Starting marquee with text: " << text_input << "\n\n";
-            std::cout << "[feature to be implemented]\n\n";
+            std::string marquee_text = text_input; //make a copy of the text input para hindi mamodify ung og
+
+            for (int i = 0; i < marquee_text.length()*2+1; i++) //scrolls through the text 2 complete times
+            {
+                std::cout << "\r" << marquee_text << std::flush;
+
+                marquee2(marquee_text);
+
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(refresh_speed) //controls speed at which the text moves
+                );
+            }
+
+            std::cout << "\n\n";
+
+            //std::cout << "Starting marquee with text: " << text_input << "\n\n";
+            //std::cout << "[feature to be implemented]\n\n";
             // di ko alam if need pa lagyan yung para sa set_speed na input lolol
         }
 
