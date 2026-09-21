@@ -13,6 +13,8 @@ int main() {
     
     bool running = true;
     int refresh_speed = 500; // can change
+    std::string text_input = "Default Text";
+    
     while (running)
     {
         std::cout << "Command > ";
@@ -35,7 +37,6 @@ int main() {
         else if (command_prompt == "set_text")
         {
             // di ko sure if ganto dapat ha lol
-            std::string text_input = "";
             std::getline(ss >> std::ws, text_input); // gets rest of the line, but discards whitespace
             std::cout << "Text saved for marquee: " << text_input << "\n\n";
         }
@@ -56,6 +57,7 @@ int main() {
 
         else if (command_prompt == "start_marquee")
         {
+            std::cout << "Starting marquee with text: " << text_input << "\n\n";
             std::cout << "[feature to be implemented]\n\n";
             // di ko alam if need pa lagyan yung para sa set_speed na input lolol
         }
