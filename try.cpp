@@ -1,34 +1,26 @@
 #include <iostream>
 #include <string>
+#include <sstream>
 
 int main() {
     std::cout << "Welcome to CSOPESY!\n\n";
-    std::cout << "Group developer:\n";
+    std::cout << "Group Developers:\n";
     std::cout << "Austria, Ma. Alexandria\n";
     std::cout << "De Leon, Sofia Ysabela\n";
     std::cout << "Guererro, Laura Mae\n";
     std::cout << "Patricio, Anne Beatriz\n\n";
-    std::cout << "Version date: 2026-09-18\n\n";
+    std::cout << "Version date: 2026-09-21\n\n";
     
     bool running = true;
+    int refresh_speed = 500; // can change
     while (running)
     {
-        std::string command_prompt;
         std::cout << "Command > ";
-        std::cin >> command_prompt;
-
-        if (command_prompt != "help" && command_prompt != "set_text" && command_prompt != "exit")
-        {
-            if (command_prompt == "start_marquee" || command_prompt == "stop_marquee" || command_prompt == "set_speed")
-            {
-                std::cout << "[feature to be implemented]\n\n";
-                // di ko alam if need pa lagyan yung para sa set_speed na input lolol
-            }
-            else
-            {
-                std::cout << "Invalid command input. Type 'help' for a list of commands.\n\n";
-            }
-        }
+        std::string line;
+        std::getline(std::cin, line); // read first
+        std::stringstream ss(line); // uses stringstream instead to read entire line
+        std::string command_prompt;
+        ss >> command_prompt; // unang word lang kukunin to get the command ?
 
         if (command_prompt == "help")
         {
@@ -40,20 +32,51 @@ int main() {
             std::cout << "exit - terminates the console\n\n";
         }
 
-        if (command_prompt == "set_text")
+        else if (command_prompt == "set_text")
         {
             // di ko sure if ganto dapat ha lol
-            std::string text_input;
-            std::cin.ignore();
-            std::getline(std::cin, text_input);
+            std::string text_input = "";
+            std::getline(ss >> std::ws, text_input); // gets rest of the line, but discards whitespace
             std::cout << "Text saved for marquee: " << text_input << "\n\n";
         }
 
-        if (command_prompt == "exit")
+        else if (command_prompt == "set_speed")
+        {
+            int speed;
+            if (ss >> speed && speed > 0)
+            {
+                refresh_speed = speed;
+                std::cout << "Marquee speed set to: " << refresh_speed << " ms\n\n";
+            }
+            else
+            {
+                std::cout << "Invalid speed input. Please enter a positive integer.\n\n";
+            }
+        }
+
+        else if (command_prompt == "start_marquee")
+        {
+            std::cout << "[feature to be implemented]\n\n";
+            // di ko alam if need pa lagyan yung para sa set_speed na input lolol
+        }
+
+        else if (command_prompt == "stop_marquee")
+        {
+            std::cout << "[feature to be implemented]\n\n";
+            // di ko alam if need pa lagyan yung para sa set_speed na input lolol
+        }
+
+        else if (command_prompt == "exit")
         {
             std::cout << "Terminating console...\n";
             running = false;
         }
+
+        else
+        {
+            std::cout << "Invalid command input. Type 'help' for a list of commands.\n\n";
+        }
+        
     }
 
     return 0;
