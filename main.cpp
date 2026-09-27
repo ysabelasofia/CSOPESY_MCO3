@@ -54,7 +54,7 @@ void marquee2(std::string& text) {
     text += first; //moves og first charac to the end
 }
 
-void run_marquee(std::string marquee_text, int refresh_speed, std::atomic<bool>& running_flag) {
+void run_marquee(std::string marquee_text, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag) {
     // changed to looping until dlag is false
     while (running_flag.load()) {
         {
@@ -68,7 +68,7 @@ void run_marquee(std::string marquee_text, int refresh_speed, std::atomic<bool>&
         marquee2(marquee_text);
 
         int time = 0;
-        while (time < refresh_speed && running_flag.load()) {
+        while (time < refresh_speed.load() && running_flag.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             time += 10;
         }
@@ -113,7 +113,8 @@ int main() {
     std::cout << "Version date: 2026-09-23\n\n";
 
     bool running = true;
-    int refresh_speed = 500; // can change 
+    //int refresh_speed = 500; // can change 
+    std::atomic<int> refresh_speed{500};
     std::string text_input = "Default Text";
     std::atomic<bool> running_marquee{false};
     std::thread marquee_thread;
@@ -165,7 +166,7 @@ int main() {
             int speed = 0;
             auto [ptr, ec] = std::from_chars(args.data(), args.data() + args.size(), speed);
             
-            if (ec == std::errc{} && speed > 0) {
+            if (ec == std::errc{} && ptr == args.data() + args.size() && speed > 0) {
                 refresh_speed = speed;
                 print_message("Marquee speed set to: " + std::to_string(refresh_speed) + " ms");
             } else {
@@ -184,7 +185,7 @@ int main() {
                 running_marquee.store(true);
                 print_message("Current speed: " + std::to_string(refresh_speed) + " ms");
 
-                marquee_thread = std::thread(run_marquee, text_input, refresh_speed, std::ref(running_marquee)); 
+                marquee_thread = std::thread(run_marquee, text_input, std::ref(refresh_speed), std::ref(running_marquee));
             }
 
             //std::cout << "Starting marquee with text: " << text_input << "\n\n";
