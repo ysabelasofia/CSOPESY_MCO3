@@ -14,9 +14,9 @@
 #endif
 
 std::mutex console_mutex; // to sync console output
-constexpr int MARQUEE_ROW = 22; // row where marquee will be displayed, change na lang idk pano sya so that it will be dynamic...
-constexpr int INPUT_ROW = 24; // row where user input will be displayed
-constexpr int MESSAGE_ROW = 26;
+//constexpr int MARQUEE_ROW = 22; // row where marquee will be displayed, change na lang idk pano sya so that it will be dynamic...
+//constexpr int INPUT_ROW = 24; // row where user input will be displayed
+//constexpr int MESSAGE_ROW = 26;
 
 #ifdef _WIN32
 // ANSI escape on Windows
@@ -25,6 +25,18 @@ void enable_ansi() {
     DWORD mode = 0;
     GetConsoleMode(h, &mode);
     SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+}
+#endif
+
+#ifdef _WIN32
+COORD get_cursor_pos() {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+    return csbi.dwCursorPosition; // gives live (X, Y) coordinate
+}
+
+void set_cursor_pos(short x, short y) {
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), {x, y});
 }
 #endif
 
@@ -54,16 +66,21 @@ void marquee2(std::string& text) {
     text += first; //moves og first charac to the end
 }
 
+constexpr short MARQUEE_ROW = 20;
+
 void run_marquee(std::string marquee_text, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag) {
     // changed to looping until dlag is false
     while (running_flag.load()) {
         {
             std::lock_guard<std::mutex> lock(console_mutex);
-            std::cout << "\033[s";
-            std::cout << "\033[" << MARQUEE_ROW << ";1H"; // jump to marquee row
-            std::cout << "\033[K";
-            std::cout << marquee_text;
-            std::cout << "\033[u" << std::flush; // restore cursor to input line
+            COORD current_pos = get_cursor_pos();
+
+            //move to marquee row and redraw
+            set_cursor_pos(0, MARQUEE_ROW);
+            std::cout << "\033[K" << marquee_text << std::flush;
+
+            // put cursor back to where the user is typing/viewing
+            set_cursor_pos(current_pos.X, current_pos.Y);
         }
         marquee2(marquee_text);
 
@@ -77,24 +94,17 @@ void run_marquee(std::string marquee_text, std::atomic<int>& refresh_speed, std:
     // Clean up terminal line when finished or stopped
     {
         std::lock_guard<std::mutex> lock(console_mutex);
-        std::cout << "\033[" << MARQUEE_ROW << ";1H";
+        COORD current_pos = get_cursor_pos();
+        set_cursor_pos(0, MARQUEE_ROW);
         std::cout << "\033[K" << std::flush;
+        set_cursor_pos(current_pos.X, current_pos.Y);
     }
 }
 
-// each line gets own row after MESSAGE_ROW
+
 void print_message(const std::string& msg) {
     std::lock_guard<std::mutex> lock(console_mutex);
-    std::istringstream iss(msg);
-    std::string line;
-    int row = MESSAGE_ROW;
-    while (std::getline(iss, line)) {
-        std::cout << "\033[" << row << ";1H";
-        std::cout << "\033[K";
-        std::cout << line;
-        row++;
-    }
-    std::cout << std::flush;
+    std::cout << msg << "\n" << std::flush;
 }
 
 int main() {
@@ -110,7 +120,7 @@ int main() {
     std::cout << "De Leon, Sofia Ysabela\n";
     std::cout << "Guererro, Laura Mae\n";
     std::cout << "Patricio, Anne Beatriz\n\n";
-    std::cout << "Version date: 2026-09-23\n\n";
+    std::cout << "Version date: 2026-09-23\n\n\n";
 
     bool running = true;
     //int refresh_speed = 500; // can change 
@@ -121,13 +131,12 @@ int main() {
     
     std::string line;
     line.reserve(128); // pre-set memory
+    set_cursor_pos(0, MARQUEE_ROW + 2);
 
     while (running) {
         {
             std::lock_guard<std::mutex> lock(console_mutex);
-            std::cout << "\033[" << INPUT_ROW << ";1H";
-            std::cout << "\033[K";
-            std::cout << "Command> " << std::flush;
+            std::cout << "\nCommand> " << std::flush;
         }
         if (!std::getline(std::cin, line)) break; // reads input 
 
