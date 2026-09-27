@@ -1,4 +1,4 @@
-// to compile: g++ -std=c++17 -O2 -o try.exe try.cpp -lpthread
+// to compile: g++ -std=c++17 -O2 -o main.exe main.cpp -lpthread
 
 #include <iostream>
 #include <sstream>
@@ -14,7 +14,7 @@
 #endif
 
 std::mutex console_mutex; // to sync console output
-//constexpr int MARQUEE_ROW = 22; // row where marquee will be displayed, change na lang idk pano sya so that it will be dynamic...
+constexpr short MARQUEE_ROW = 20;
 //constexpr int INPUT_ROW = 24; // row where user input will be displayed
 //constexpr int MESSAGE_ROW = 26;
 
@@ -66,23 +66,45 @@ void marquee2(std::string& text) {
     text += first; //moves og first charac to the end
 }
 
-constexpr short MARQUEE_ROW = 20;
+// marquee text state struct
+struct MarqueeState {
+    std::mutex m;
+    std::string text;
+};
 
-void run_marquee(std::string marquee_text, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag) {
+void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag) {
+    std::string display_text;
+    std::string last_seen;
+
+    {
+    std::lock_guard<std::mutex> lock(state.m);
+    if (state.text != last_seen) {
+        display_text = state.text;
+        last_seen = state.text;
+        }
+    }
+    
     // changed to looping until dlag is false
     while (running_flag.load()) {
+        {
+            std::lock_guard<std::mutex> lock(console_mutex);
+            if (state.text != last_seen) {
+                display_text = state.text; // pick up the new text, restart rotation
+                last_seen = state.text;
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(console_mutex);
             COORD current_pos = get_cursor_pos();
 
             //move to marquee row and redraw
             set_cursor_pos(0, MARQUEE_ROW);
-            std::cout << "\033[K" << marquee_text << std::flush;
+            std::cout << "\033[K" << display_text << std::flush;
 
             // put cursor back to where the user is typing/viewing
             set_cursor_pos(current_pos.X, current_pos.Y);
         }
-        marquee2(marquee_text);
+        marquee2(display_text);
 
         int time = 0;
         while (time < refresh_speed.load() && running_flag.load()) {
@@ -125,6 +147,8 @@ int main() {
     bool running = true;
     //int refresh_speed = 500; // can change 
     std::atomic<int> refresh_speed{500};
+    MarqueeState marquee_text;
+    marquee_text.text = "Default Text";
     std::string text_input = "Default Text";
     std::atomic<bool> running_marquee{false};
     std::thread marquee_thread;
@@ -166,8 +190,11 @@ int main() {
             if (args.empty()) {
                 print_message("Error: Missing text argument for set_text.");
             } else {
-                text_input = std::string(args);
-                print_message("Text saved for marquee: " + text_input);
+                {
+                    std::lock_guard<std::mutex> lock(marquee_text.m);
+                    marquee_text.text = std::string(args);
+                }
+                print_message("Text saved for marquee: " + std::string(args));
             }
         }
 
@@ -194,7 +221,7 @@ int main() {
                 running_marquee.store(true);
                 print_message("Current speed: " + std::to_string(refresh_speed) + " ms");
 
-                marquee_thread = std::thread(run_marquee, text_input, std::ref(refresh_speed), std::ref(running_marquee));
+                marquee_thread = std::thread(run_marquee, std::ref(marquee_text), std::ref(refresh_speed), std::ref(running_marquee));
             }
 
             //std::cout << "Starting marquee with text: " << text_input << "\n\n";
