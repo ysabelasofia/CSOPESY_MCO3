@@ -21,6 +21,7 @@
 
 std::mutex console_mutex; // to sync console output
 short marquee_row = 0;
+int body_top_row = 0; // 1-based screen row where the scrolling area (below the marquee) starts
 //constexpr int INPUT_ROW = 24; // row where user input will be displayed
 //constexpr int MESSAGE_ROW = 26;
 
@@ -127,17 +128,18 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
 
         {
             std::lock_guard<std::mutex> lock(console_mutex);
-            COORD current_pos = get_cursor_pos();
+            CONSOLE_SCREEN_BUFFER_INFO csbi;
+            GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
 
-            set_cursor_pos(0, marquee_row);
-            std::cout << "\033[K";
+            // whole frame goes out in ONE write so typing can't land between "save cursor" and "restore cursor"
+            std::string frame = "\033" "7"; // save cursor
+            frame += "\033[" + std::to_string(marquee_row - csbi.srWindow.Top + 1) + ";1H"; // go to marquee row
+            frame += "\033[K";
             if (visible_len > 0 && text_offset < text_len) {
-                std::cout << std::string(start_col, ' ')
-                          << display_text.substr(text_offset, visible_len);
+                frame += std::string(start_col, ' ') + display_text.substr(text_offset, visible_len);
             }
-            std::cout << std::flush;
-
-            set_cursor_pos(current_pos.X, current_pos.Y);
+            frame += "\033" "8"; // restore cursor
+            std::cout << frame << std::flush;
         }
 
         // move one direction only 
@@ -153,15 +155,22 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
 
     {
         std::lock_guard<std::mutex> lock(console_mutex);
-        COORD current_pos = get_cursor_pos();
-        set_cursor_pos(0, marquee_row);
-        std::cout << "\033[K" << std::flush;
-        set_cursor_pos(current_pos.X, current_pos.Y);
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+        std::string frame = "\033" "7";
+        frame += "\033[" + std::to_string(marquee_row - csbi.srWindow.Top + 1) + ";1H";
+        frame += "\033[K";
+        frame += "\033" "8";
+        std::cout << frame << std::flush;
     }
 }
 
 void print_message(const std::string& msg) {
     std::lock_guard<std::mutex> lock(console_mutex);
+    if (body_top_row > 0 && msg.find('\n') != std::string::npos) {
+        // multi-line output (help): start from the top of the scrolling area so its first lines don't scroll off
+        std::cout << "\033[" << body_top_row << ";1H\033[J";
+    }
     std::cout << msg << "\n" << std::flush;
 }
 
@@ -202,6 +211,7 @@ int main() {
         GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
         int top_row = marquee_row - csbi.srWindow.Top + 2;              // 1-based screen row right under the marquee
         int bottom_row = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;  // last visible row
+        body_top_row = top_row;
         std::cout << "\033[" << top_row << ";" << bottom_row << "r" << std::flush;
     }
 #endif
