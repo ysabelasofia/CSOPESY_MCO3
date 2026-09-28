@@ -37,13 +37,13 @@ csopesy.exe
 After compiling, run:
 
 ```bash
-main.exe
+csopesy.exe
 ```
 
 Or from the terminal:
 
 ```bash
-./main.exe
+./csopesy.exe
 ```
 
 ## Program Commands
