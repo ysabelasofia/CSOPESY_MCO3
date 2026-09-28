@@ -9,8 +9,6 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
-#include <vector>
-#include <algorithm>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -25,18 +23,6 @@ std::mutex console_mutex; // to sync console output
 short marquee_row = 0;
 //constexpr int INPUT_ROW = 24; // row where user input will be displayed
 //constexpr int MESSAGE_ROW = 26;
-
-// number of console rows reserved at the top for the animated scene
-constexpr int SCENE_H = 10;
-
-// Win32 console colors used by the scene
-constexpr WORD ATTR_GRAY   = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
-constexpr WORD ATTR_WHITE  = ATTR_GRAY | FOREGROUND_INTENSITY;
-constexpr WORD ATTR_CYAN   = FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
-constexpr WORD ATTR_BLUE   = FOREGROUND_BLUE | FOREGROUND_INTENSITY;
-constexpr WORD ATTR_YELLOW = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY;
-constexpr WORD ATTR_RED    = FOREGROUND_RED | FOREGROUND_INTENSITY;
-constexpr WORD ATTR_SIGN   = ATTR_WHITE | BACKGROUND_BLUE; // white text on blue sign
 
 #ifdef _WIN32
 // ANSI escape on Windows
@@ -57,6 +43,12 @@ COORD get_cursor_pos() {
 
 void set_cursor_pos(short x, short y) {
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), {x, y});
+}
+
+short get_console_width() {
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+    return static_cast<short>(csbi.srWindow.Right - csbi.srWindow.Left + 1);
 }
 #endif
 
@@ -95,86 +87,10 @@ struct MarqueeState {
     std::string text;
 };
 
-
-// in-memory grid of characters + colors for one animation frame.
-struct Canvas {
-    int w;
-    std::vector<std::string> ch;
-    std::vector<std::vector<WORD>> at;
-
-    explicit Canvas(int width)
-        : w(width),
-          ch(SCENE_H, std::string(width, ' ')),
-          at(SCENE_H, std::vector<WORD>(width, ATTR_GRAY)) {}
-
-    // draw string s at (row, x). spaces are transparent unless opaque == true
-    void put(int row, int x, const std::string& s, WORD attr, bool opaque = false) {
-        if (row < 0 || row >= SCENE_H) return;
-        for (size_t i = 0; i < s.size(); ++i) {
-            int col = x + static_cast<int>(i);
-            if (col < 0 || col >= w) continue;
-            if (!opaque && s[i] == ' ') continue;
-            ch[row][col] = s[i];
-            at[row][col] = attr;
-        }
-    }
-};
-
-
-// a boat sailing on animated waves, carrying the text on its sign
-void draw_boat(Canvas& cv, const std::string& text, int x, int frame) {
-    const int L = static_cast<int>(text.size());
-    const int W = L + 8;
-
-    // drifting clouds on the top row (slower than the boat)
-    static const std::string sky =
-        "      .--.                   .-~~-.                 _  .--.            ";
-    for (int c = 0; c < cv.w; ++c) {
-        char s = sky[(c + frame / 3) % sky.size()];
-        if (s != ' ') cv.put(0, c, std::string(1, s), ATTR_GRAY);
-    }
-
-    // waves (drawn first so the hull can sit in them)
-    static const std::string wv = "~-_~~-_-~~_-";
-    const int n = static_cast<int>(wv.size());
-    const WORD wattr[3] = {ATTR_CYAN, ATTR_CYAN, ATTR_BLUE};
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < cv.w; ++c) {
-            int i = (((c - frame + r * 3) % n) + n) % n;
-            cv.put(SCENE_H - 3 + r, c, std::string(1, wv[i]), wattr[r]);
-        }
-    }
-
-    // boat bobs up and down
-    const int bob = (frame / 5) % 2;
-    const int top = 1 + bob;
-    const int mid = x + W / 2;
-
-    cv.put(top,     mid, "|>", ATTR_RED);
-    cv.put(top + 1, mid, "|",  ATTR_WHITE);
-
-    // cabin / sign
-    cv.put(top + 2, x + 2, "." + std::string(L + 2, '-') + ".", ATTR_YELLOW);
-    cv.put(top + 3, x + 2, "|", ATTR_YELLOW);
-    cv.put(top + 3, x + 3, " " + text + " ", ATTR_SIGN, true);
-    cv.put(top + 3, x + L + 5, "|", ATTR_YELLOW);
-    cv.put(top + 4, x + 2, "'" + std::string(L + 2, '-') + "'", ATTR_YELLOW);
-
-    // hull with portholes
-    std::string hull(W - 2, '_');
-    for (int i = 2; i < W - 3; i += 4) hull[i] = 'o';
-    cv.put(top + 5, x,     "\\" + hull + "/", ATTR_RED);
-    cv.put(top + 6, x + 1, "\\" + std::string(W - 4, '_') + "/", ATTR_RED);
-}
-
-void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag,
-                 short marquee_row) {
+void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag, short marquee_row) {
     std::string display_text;
     std::string last_seen;
-    int obj_x = 0;
-    int frame = 0;
-    int width = 80;
-    bool need_reset = true; // restart the object from the right edge
+    int position = 0; 
 
     {
         std::lock_guard<std::mutex> lock(state.m);
@@ -188,62 +104,63 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
             if (state.text != last_seen) {
                 display_text = state.text;
                 last_seen = state.text;
-                need_reset = true;
+                position = 0;
             }
         }
 
         if (display_text.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(refresh_speed.load()));
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(refresh_speed.load())
+            );
             continue;
         }
 
-        const int L = static_cast<int>(display_text.size());
-        const int obj_w = L + 8; // boat width
+        #ifdef _WIN32
+                short console_width = get_console_width();
+        #else
+                short console_width = 80;
+        #endif
+
+        int text_len = static_cast<int>(display_text.length());
+
+        // ayos visible part of text to console width
+        int start_col = std::max(0, position);
+        int text_offset = start_col - position; // chars to skip when text starts off-screen left
+        int visible_len = std::min(text_len - text_offset, static_cast<int>(console_width) - 1 - start_col);
 
         {
             std::lock_guard<std::mutex> lock(console_mutex);
             HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
             CONSOLE_SCREEN_BUFFER_INFO csbi;
             GetConsoleScreenBufferInfo(h, &csbi);
-            width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
-            if (need_reset) {
-                obj_x = width;
-                need_reset = false;
+            // write straight into the marquee row's cells; this never touches the cursor, so it can't move while typing
+            std::string row_text(csbi.dwSize.X, ' ');
+            if (visible_len > 0 && text_offset < text_len) {
+                row_text.replace(start_col, visible_len, display_text.substr(text_offset, visible_len));
             }
-
-            Canvas cv(width);
-            draw_boat(cv, display_text, obj_x, frame);
-
-            // write straight into the scene rows' cells; this never touches the cursor, so it can't move while typing
-            for (int r = 0; r < SCENE_H; ++r) {
-                DWORD written = 0;
-                COORD pos = {0, static_cast<SHORT>(marquee_row + r)};
-                WriteConsoleOutputCharacterA(h, cv.ch[r].c_str(), static_cast<DWORD>(width), pos, &written);
-                WriteConsoleOutputAttribute(h, cv.at[r].data(), static_cast<DWORD>(width), pos, &written);
-            }
+            DWORD written = 0;
+            WriteConsoleOutputCharacterA(h, row_text.c_str(), static_cast<DWORD>(row_text.size()), {0, marquee_row}, &written);
         }
 
-        // move one direction only (right to left)
-        --obj_x;
-        ++frame;
-        if (obj_x < -obj_w) need_reset = true;
+        // move one direction only 
+        --position;
+        if (position < -text_len) {
+            position = console_width;
+        }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(refresh_speed.load()));
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(refresh_speed.load())
+        );
     }
 
-    // clear the scene area
     {
         std::lock_guard<std::mutex> lock(console_mutex);
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
         CONSOLE_SCREEN_BUFFER_INFO csbi;
         GetConsoleScreenBufferInfo(h, &csbi);
-        for (int r = 0; r < SCENE_H; ++r) {
-            DWORD written = 0;
-            COORD pos = {0, static_cast<SHORT>(marquee_row + r)};
-            FillConsoleOutputCharacterA(h, ' ', csbi.dwSize.X, pos, &written);
-            FillConsoleOutputAttribute(h, ATTR_GRAY, csbi.dwSize.X, pos, &written);
-        }
+        DWORD written = 0;
+        FillConsoleOutputCharacterA(h, ' ', csbi.dwSize.X, {0, marquee_row}, &written);
     }
 }
 
@@ -258,20 +175,33 @@ int main() {
 #endif
     std::cout << "\033[2J\033[H" << std::flush; // clear screen, home cursor
 
-    marquee_row = get_cursor_pos().Y; // top row of the window (scene goes here once the marquee starts)
+    marquee_row = get_cursor_pos().Y; // top row of the window is the marquee row
+
+#ifdef _WIN32
+    // only everything BELOW the marquee row may scroll, so the marquee row stays put
+    {
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+        int top_row = marquee_row - csbi.srWindow.Top + 2;              // 1-based screen row right under the marquee
+        int bottom_row = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;  // last visible row
+        std::cout << "\033[" << top_row << ";" << bottom_row << "r" << std::flush;
+    }
+#endif
+    set_cursor_pos(0, marquee_row + 1);
 
     print_banner();
 
     print_welcome();
 
     bool running = true;
-    std::atomic<int> refresh_speed{100}; // 100 ms per frame looks smoother for a scene; use set_speed to change
+    //int refresh_speed = 500; // can change 
+    std::atomic<int> refresh_speed{500};
     MarqueeState marquee_text;
     marquee_text.text = "Default Text";
     std::atomic<bool> running_marquee{false};
     std::thread marquee_thread;
     bool banner_cleared = false; // banner is wiped (names kept) only the first time the marquee starts
-
+    
     std::string line;
     line.reserve(128); // pre-set memory
 
@@ -280,13 +210,13 @@ int main() {
             std::lock_guard<std::mutex> lock(console_mutex);
             std::cout << "\nCommand > " << std::flush;
         }
-        if (!std::getline(std::cin, line)) break; // reads input
+        if (!std::getline(std::cin, line)) break; // reads input 
 
         std::string_view sv(line);
 
         size_t start = sv.find_first_not_of(" \t"); // pang hanap ng first char
         if (start == std::string_view::npos) continue; // loop if empty input
-        sv.remove_prefix(start);
+        sv.remove_prefix(start); 
 
         size_t cmd_end = sv.find_first_of(" \t");
         std::string_view cmd = sv.substr(0, cmd_end);
@@ -297,6 +227,8 @@ int main() {
             if (args_start != std::string_view::npos) {
                 args = sv.substr(args_start);
             }
+            // gagana parin even if may whitespace unahan and dulo
+            // args empty lang pag only trailing whitespace after command
         }
 
         if (cmd == "help") {
@@ -323,7 +255,7 @@ int main() {
         else if (cmd == "set_speed") {
             int speed = 0;
             auto [ptr, ec] = std::from_chars(args.data(), args.data() + args.size(), speed);
-
+            
             if (ec == std::errc{} && ptr == args.data() + args.size() && speed > 0) {
                 refresh_speed = speed;
                 print_message("Marquee speed set to: " + std::to_string(refresh_speed) + " ms");
@@ -341,29 +273,30 @@ int main() {
                 }
 
                 if (!banner_cleared) {
-                    // wipe the ASCII banner, reserve the scene rows at the top, redraw the names right under them
+                    // wipe the ASCII banner, then redraw the names right under the marquee and keep them pinned there
                     std::lock_guard<std::mutex> lock(console_mutex);
-                    std::cout << "\033[2J\033[H" << std::flush; // clear screen, home cursor
                     CONSOLE_SCREEN_BUFFER_INFO csbi;
                     GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-                    marquee_row = csbi.dwCursorPosition.Y; // scene starts at the top of the window
                     int win_top = csbi.srWindow.Top;
-                    int win_bottom = csbi.srWindow.Bottom;
-                    set_cursor_pos(0, marquee_row + SCENE_H);
+                    std::cout << "\033[" << (marquee_row - win_top + 2) << ";1H\033[J"; // clear everything under the marquee row
                     print_welcome();
                     std::cout << std::flush;
                     COORD after_names = get_cursor_pos();
                     // from now on only the rows below the names scroll
-                    std::cout << "\033[" << (after_names.Y - win_top + 1) << ";" << (win_bottom - win_top + 1) << "r" << std::flush;
+                    std::cout << "\033[" << (after_names.Y - win_top + 1) << ";" << (csbi.srWindow.Bottom - win_top + 1) << "r" << std::flush;
                     set_cursor_pos(0, after_names.Y);
                     banner_cleared = true;
                 }
 
                 running_marquee.store(true);
+                //print_message("Current speed: " + std::to_string(refresh_speed.load()) + " ms");
 
-                marquee_thread = std::thread(run_marquee, std::ref(marquee_text), std::ref(refresh_speed),
-                                             std::ref(running_marquee), marquee_row);
+                marquee_thread = std::thread(run_marquee, std::ref(marquee_text), std::ref(refresh_speed), std::ref(running_marquee), marquee_row);
             }
+
+            //std::cout << "Starting marquee with text: " << text_input << "\n\n";
+            //std::cout << "[feature to be implemented]\n\n";
+            // di ko alam if need pa lagyan yung para sa set_speed na input lolol
         }
 
         else if (cmd == "stop_marquee") {
@@ -375,7 +308,10 @@ int main() {
                 print_message("Marquee stopped.");
             } else {
                 print_message("Marquee is not currently running.");
-            }
+            } 
+            
+            //std::cout << "[feature to be implemented]\n\n";
+            // di ko alam if need pa lagyan yung para sa set_speed na input lolol
         }
 
         else if (cmd == "exit") {
