@@ -81,14 +81,6 @@ void print_welcome() {
     std::cout << COLOR_YELLOW << "Version date: 2026-09-27\n\n" << RESET_COLOR;
 }
 
-void marquee2(std::string& text) {
-    if (text.empty()) return;
-
-    char first = text[0]; //gets front charac
-    text.erase(0, 1);
-    text += first; //moves og first charac to the end
-}
-
 // marquee text state struct
 struct MarqueeState {
     std::mutex m;
@@ -297,7 +289,7 @@ int main() {
                 }
 
                 running_marquee.store(true);
-                print_message("Current speed: " + std::to_string(refresh_speed) + " ms");
+                //print_message("Current speed: " + std::to_string(refresh_speed.load()) + " ms");
 
                 marquee_thread = std::thread(run_marquee, std::ref(marquee_text), std::ref(refresh_speed), std::ref(running_marquee), marquee_row);
             }
