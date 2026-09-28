@@ -93,6 +93,14 @@ void print_welcome() {
 struct MarqueeState {
     std::mutex m;
     std::string text;
+
+    // animation state; only touched by the marquee thread, and it persists across stop/start so the animation can pause and resume
+    std::string display_text;
+    std::string last_seen;
+    int obj_x = 0;
+    int frame = 0;
+    bool need_reset = true; // restart the object from the right edge
+    bool initialized = false;
 };
 
 
@@ -169,17 +177,19 @@ void draw_boat(Canvas& cv, const std::string& text, int x, int frame) {
 
 void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atomic<bool>& running_flag,
                  short marquee_row) {
-    std::string display_text;
-    std::string last_seen;
-    int obj_x = 0;
-    int frame = 0;
+    // persistent state (survives pause/resume)
+    std::string& display_text = state.display_text;
+    std::string& last_seen = state.last_seen;
+    int& obj_x = state.obj_x;
+    int& frame = state.frame;
+    bool& need_reset = state.need_reset;
     int width = 80;
-    bool need_reset = true; // restart the object from the right edge
 
-    {
+    if (!state.initialized) {
         std::lock_guard<std::mutex> lock(state.m);
         display_text = state.text;
         last_seen = state.text;
+        state.initialized = true;
     }
 
     while (running_flag.load()) {
@@ -215,7 +225,6 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
             Canvas cv(width);
             draw_boat(cv, display_text, obj_x, frame);
 
-            // write straight into the scene rows' cells; this never touches the cursor, so it can't move while typing
             for (int r = 0; r < SCENE_H; ++r) {
                 DWORD written = 0;
                 COORD pos = {0, static_cast<SHORT>(marquee_row + r)};
@@ -232,19 +241,7 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
         std::this_thread::sleep_for(std::chrono::milliseconds(refresh_speed.load()));
     }
 
-    // clear the scene area
-    {
-        std::lock_guard<std::mutex> lock(console_mutex);
-        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-        CONSOLE_SCREEN_BUFFER_INFO csbi;
-        GetConsoleScreenBufferInfo(h, &csbi);
-        for (int r = 0; r < SCENE_H; ++r) {
-            DWORD written = 0;
-            COORD pos = {0, static_cast<SHORT>(marquee_row + r)};
-            FillConsoleOutputCharacterA(h, ' ', csbi.dwSize.X, pos, &written);
-            FillConsoleOutputAttribute(h, ATTR_GRAY, csbi.dwSize.X, pos, &written);
-        }
-    }
+    
 }
 
 void print_message(const std::string& msg) {
