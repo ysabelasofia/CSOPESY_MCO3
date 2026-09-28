@@ -1,5 +1,4 @@
 // to compile: g++ -std=c++17 -O2 -o main.exe main.cpp -lpthread
-// NOTE: Windows console only (uses the Win32 console API for the animation)
 
 #include <iostream>
 #include <sstream>
@@ -24,6 +23,8 @@
 
 std::mutex console_mutex; // to sync console output
 short marquee_row = 0;
+//constexpr int INPUT_ROW = 24; // row where user input will be displayed
+//constexpr int MESSAGE_ROW = 26;
 
 // number of console rows reserved at the top for the animated scene
 constexpr int SCENE_H = 10;
@@ -94,11 +95,8 @@ struct MarqueeState {
     std::string text;
 };
 
-// ---------------------------------------------------------------------------
-// Canvas: an in-memory grid of characters + colors for one animation frame.
-// Sprites are drawn onto it (clipped at the edges), then the whole grid is
-// written to the console in one go.
-// ---------------------------------------------------------------------------
+
+// in-memory grid of characters + colors for one animation frame.
 struct Canvas {
     int w;
     std::vector<std::string> ch;
@@ -122,18 +120,8 @@ struct Canvas {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Boat scene: a boat sailing on animated waves, carrying the text on its sign
-//
-//                  |>
-//                  |
-//            .------------.
-//            | Default Text |     <- blue sign
-//            '------------'
-//          \_o__o__o__o__o__/
-//            \____________/
-//     ~-_~~-_-~~_-~-_~~-_-~~_-    (waves scroll the other way)
-// ---------------------------------------------------------------------------
+
+// a boat sailing on animated waves, carrying the text on its sign
 void draw_boat(Canvas& cv, const std::string& text, int x, int frame) {
     const int L = static_cast<int>(text.size());
     const int W = L + 8;
@@ -270,19 +258,7 @@ int main() {
 #endif
     std::cout << "\033[2J\033[H" << std::flush; // clear screen, home cursor
 
-    marquee_row = get_cursor_pos().Y; // top row of the window is where the scene starts
-
-#ifdef _WIN32
-    // only everything BELOW the scene may scroll, so the scene rows stay put
-    {
-        CONSOLE_SCREEN_BUFFER_INFO csbi;
-        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-        int top_row = marquee_row - csbi.srWindow.Top + SCENE_H + 1;    // 1-based screen row right under the scene
-        int bottom_row = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;  // last visible row
-        std::cout << "\033[" << top_row << ";" << bottom_row << "r" << std::flush;
-    }
-#endif
-    set_cursor_pos(0, marquee_row + SCENE_H);
+    marquee_row = get_cursor_pos().Y; // top row of the window (scene goes here once the marquee starts)
 
     print_banner();
 
@@ -365,17 +341,20 @@ int main() {
                 }
 
                 if (!banner_cleared) {
-                    // wipe the ASCII banner, then redraw the names right under the scene and keep them pinned there
+                    // wipe the ASCII banner, reserve the scene rows at the top, redraw the names right under them
                     std::lock_guard<std::mutex> lock(console_mutex);
+                    std::cout << "\033[2J\033[H" << std::flush; // clear screen, home cursor
                     CONSOLE_SCREEN_BUFFER_INFO csbi;
                     GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+                    marquee_row = csbi.dwCursorPosition.Y; // scene starts at the top of the window
                     int win_top = csbi.srWindow.Top;
-                    std::cout << "\033[" << (marquee_row - win_top + SCENE_H + 1) << ";1H\033[J"; // clear everything under the scene
+                    int win_bottom = csbi.srWindow.Bottom;
+                    set_cursor_pos(0, marquee_row + SCENE_H);
                     print_welcome();
                     std::cout << std::flush;
                     COORD after_names = get_cursor_pos();
                     // from now on only the rows below the names scroll
-                    std::cout << "\033[" << (after_names.Y - win_top + 1) << ";" << (csbi.srWindow.Bottom - win_top + 1) << "r" << std::flush;
+                    std::cout << "\033[" << (after_names.Y - win_top + 1) << ";" << (win_bottom - win_top + 1) << "r" << std::flush;
                     set_cursor_pos(0, after_names.Y);
                     banner_cleared = true;
                 }
