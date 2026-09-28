@@ -21,7 +21,6 @@
 
 std::mutex console_mutex; // to sync console output
 short marquee_row = 0;
-int body_top_row = 0; // 1-based screen row where the scrolling area (below the marquee) starts
 //constexpr int INPUT_ROW = 24; // row where user input will be displayed
 //constexpr int MESSAGE_ROW = 26;
 
@@ -69,6 +68,17 @@ R"(+------------------------------------------------------------------+
 |  \____|____/ \___/|_|   |_____|____/ |_|   |_|  |_|\___/____/  |
 +------------------------------------------------------------------+
 )" << RESET_COLOR << std::flush;
+}
+
+// welcome text + developer names (moved into a function so it can be redrawn after the banner is cleared)
+void print_welcome() {
+    std::cout << COLOR_YELLOW << "Welcome to CSOPESY!\n\n"
+            << "Group Developers:\n";
+    std::cout << COLOR_GREEN   << "Austria, Ma. Alexandria\n"
+            << "De Leon, Sofia Ysabela\n"
+            << "Guererro, Laura Mae\n"
+            << "Patricio, Anne Beatriz\n\n";
+    std::cout << COLOR_YELLOW << "Version date: 2026-09-27\n\n" << RESET_COLOR;
 }
 
 void marquee2(std::string& text) {
@@ -128,18 +138,17 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
 
         {
             std::lock_guard<std::mutex> lock(console_mutex);
+            HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
             CONSOLE_SCREEN_BUFFER_INFO csbi;
-            GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+            GetConsoleScreenBufferInfo(h, &csbi);
 
-            // whole frame goes out in ONE write so typing can't land between "save cursor" and "restore cursor"
-            std::string frame = "\033" "7"; // save cursor
-            frame += "\033[" + std::to_string(marquee_row - csbi.srWindow.Top + 1) + ";1H"; // go to marquee row
-            frame += "\033[K";
+            // write straight into the marquee row's cells; this never touches the cursor, so it can't move while typing
+            std::string row_text(csbi.dwSize.X, ' ');
             if (visible_len > 0 && text_offset < text_len) {
-                frame += std::string(start_col, ' ') + display_text.substr(text_offset, visible_len);
+                row_text.replace(start_col, visible_len, display_text.substr(text_offset, visible_len));
             }
-            frame += "\033" "8"; // restore cursor
-            std::cout << frame << std::flush;
+            DWORD written = 0;
+            WriteConsoleOutputCharacterA(h, row_text.c_str(), static_cast<DWORD>(row_text.size()), {0, marquee_row}, &written);
         }
 
         // move one direction only 
@@ -155,22 +164,16 @@ void run_marquee(MarqueeState& state, std::atomic<int>& refresh_speed, std::atom
 
     {
         std::lock_guard<std::mutex> lock(console_mutex);
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
         CONSOLE_SCREEN_BUFFER_INFO csbi;
-        GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-        std::string frame = "\033" "7";
-        frame += "\033[" + std::to_string(marquee_row - csbi.srWindow.Top + 1) + ";1H";
-        frame += "\033[K";
-        frame += "\033" "8";
-        std::cout << frame << std::flush;
+        GetConsoleScreenBufferInfo(h, &csbi);
+        DWORD written = 0;
+        FillConsoleOutputCharacterA(h, ' ', csbi.dwSize.X, {0, marquee_row}, &written);
     }
 }
 
 void print_message(const std::string& msg) {
     std::lock_guard<std::mutex> lock(console_mutex);
-    if (body_top_row > 0 && msg.find('\n') != std::string::npos) {
-        // multi-line output (help): start from the top of the scrolling area so its first lines don't scroll off
-        std::cout << "\033[" << body_top_row << ";1H\033[J";
-    }
     std::cout << msg << "\n" << std::flush;
 }
 
@@ -179,30 +182,8 @@ int main() {
     enable_ansi();
 #endif
     std::cout << "\033[2J\033[H" << std::flush; // clear screen, home cursor
-    print_banner();
 
-    std::cout << COLOR_YELLOW << "Welcome to CSOPESY!\n\n"
-            << "Group Developers:\n";
-    std::cout << COLOR_GREEN   << "Austria, Ma. Alexandria\n"
-            << "De Leon, Sofia Ysabela\n"
-            << "Guererro, Laura Mae\n"
-            << "Patricio, Anne Beatriz\n\n";
-    std::cout << COLOR_YELLOW << "Version date: 2026-09-27\n\n" << RESET_COLOR;
-
-    std::cout << "\n\n\n\033[3A" << std::flush; // make sure 3 rows exist below (scrolls if window is short), then go back up
-
-    marquee_row = get_cursor_pos().Y;
-
-    bool running = true;
-    //int refresh_speed = 500; // can change 
-    std::atomic<int> refresh_speed{500};
-    MarqueeState marquee_text;
-    marquee_text.text = "Default Text";
-    std::atomic<bool> running_marquee{false};
-    std::thread marquee_thread;
-    
-    std::string line;
-    line.reserve(128); // pre-set memory
+    marquee_row = get_cursor_pos().Y; // top row of the window is the marquee row
 
 #ifdef _WIN32
     // only everything BELOW the marquee row may scroll, so the marquee row stays put
@@ -211,11 +192,26 @@ int main() {
         GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
         int top_row = marquee_row - csbi.srWindow.Top + 2;              // 1-based screen row right under the marquee
         int bottom_row = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;  // last visible row
-        body_top_row = top_row;
         std::cout << "\033[" << top_row << ";" << bottom_row << "r" << std::flush;
     }
 #endif
-    set_cursor_pos(0, marquee_row + 2);
+    set_cursor_pos(0, marquee_row + 1);
+
+    print_banner();
+
+    print_welcome();
+
+    bool running = true;
+    //int refresh_speed = 500; // can change 
+    std::atomic<int> refresh_speed{500};
+    MarqueeState marquee_text;
+    marquee_text.text = "Default Text";
+    std::atomic<bool> running_marquee{false};
+    std::thread marquee_thread;
+    bool banner_cleared = false; // banner is wiped (names kept) only the first time the marquee starts
+    
+    std::string line;
+    line.reserve(128); // pre-set memory
 
     while (running) {
         {
@@ -282,6 +278,22 @@ int main() {
             } else {
                 if (marquee_thread.joinable()) {
                     marquee_thread.join();
+                }
+
+                if (!banner_cleared) {
+                    // wipe the ASCII banner, then redraw the names right under the marquee and keep them pinned there
+                    std::lock_guard<std::mutex> lock(console_mutex);
+                    CONSOLE_SCREEN_BUFFER_INFO csbi;
+                    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+                    int win_top = csbi.srWindow.Top;
+                    std::cout << "\033[" << (marquee_row - win_top + 2) << ";1H\033[J"; // clear everything under the marquee row
+                    print_welcome();
+                    std::cout << std::flush;
+                    COORD after_names = get_cursor_pos();
+                    // from now on only the rows below the names scroll
+                    std::cout << "\033[" << (after_names.Y - win_top + 1) << ";" << (csbi.srWindow.Bottom - win_top + 1) << "r" << std::flush;
+                    set_cursor_pos(0, after_names.Y);
+                    banner_cleared = true;
                 }
 
                 running_marquee.store(true);
