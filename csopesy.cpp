@@ -265,7 +265,7 @@ int main() {
     print_welcome();
 
     bool running = true;
-    std::atomic<int> refresh_speed{100}; // 100 ms per frame looks smoother for a scene; use set_speed to change
+    std::atomic<int> refresh_speed{500}; //use set_speed to change
     MarqueeState marquee_text;
     marquee_text.text = "Default Text";
     std::atomic<bool> running_marquee{false};
